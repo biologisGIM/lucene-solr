@@ -21,6 +21,7 @@ import org.apache.solr.client.solrj.io.graph.GatherNodesStream;
 import org.apache.solr.client.solrj.io.graph.ShortestPathStream;
 import org.apache.solr.client.solrj.io.ops.ConcatOperation;
 import org.apache.solr.client.solrj.io.ops.DistinctOperation;
+import org.apache.solr.client.solrj.io.ops.FieldValueMergeOperation;
 import org.apache.solr.client.solrj.io.ops.GroupOperation;
 import org.apache.solr.client.solrj.io.ops.ReplaceOperation;
 import org.apache.solr.client.solrj.io.stream.*;
@@ -49,6 +50,7 @@ public class Lang {
         .withFunctionName("merge", MergeStream.class)
         .withFunctionName("unique", UniqueStream.class)
         .withFunctionName("top", RankStream.class)
+        .withFunctionName("fieldValueMerge", FieldValueMergeOperation.class)
         .withFunctionName("group", GroupOperation.class)
         .withFunctionName("reduce", ReducerStream.class)
         .withFunctionName("parallel", ParallelStream.class)
