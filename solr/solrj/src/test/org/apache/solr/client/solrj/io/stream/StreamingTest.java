@@ -20,6 +20,7 @@ import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
@@ -36,6 +37,7 @@ import org.apache.solr.client.solrj.io.comp.ComparatorOrder;
 import org.apache.solr.client.solrj.io.comp.FieldComparator;
 import org.apache.solr.client.solrj.io.comp.MultipleFieldComparator;
 import org.apache.solr.client.solrj.io.eq.FieldEqualitor;
+import org.apache.solr.client.solrj.io.ops.FieldValueMergeOperation;
 import org.apache.solr.client.solrj.io.ops.GroupOperation;
 import org.apache.solr.client.solrj.io.stream.expr.StreamFactory;
 import org.apache.solr.client.solrj.io.stream.metrics.Bucket;
@@ -51,6 +53,7 @@ import org.apache.solr.cloud.AbstractDistribZkTestBase;
 import org.apache.solr.cloud.SolrCloudTestCase;
 import org.apache.solr.common.params.ModifiableSolrParams;
 import org.apache.solr.common.params.SolrParams;
+import org.apache.solr.common.SolrInputDocument;
 import org.junit.Assume;
 import org.junit.Before;
 import org.junit.BeforeClass;
@@ -471,6 +474,138 @@ public void testParallelRankStream() throws Exception {
       List<Tuple> tuples = getTuples(rstream);
 
       assertEquals(0, tuples.size());
+    } finally {
+      solrClientCache.close();
+    }
+  }
+
+  @Test
+  public void testArrayFieldValueMergeReducerStream() throws Exception {
+    String mergeFieldName = "merge_ss";
+
+    SolrInputDocument d1 = new SolrInputDocument(id, "0", "a_s", "hello0", "a_i", "0", "a_f", "1");
+    String[] a1 = {"a", "b"};
+    d1.addField(mergeFieldName, a1);
+
+    SolrInputDocument d2 = new SolrInputDocument(id, "2", "a_s", "hello1", "a_i", "3", "a_f", "2");
+    String[] a2 = {"c"};
+    d2.addField(mergeFieldName, a2);
+
+    SolrInputDocument d3 = new SolrInputDocument(id, "1", "a_s", "hello0", "a_i", "2", "a_f", "3");
+    String[] a3 = {"d", "e"};
+    d3.addField(mergeFieldName, a3);
+
+    SolrInputDocument d4 = new SolrInputDocument(id, "3", "a_s", "hello2", "a_i", "2", "a_f", "4");
+    String[] a4 = {};
+    d4.addField(mergeFieldName, a4);
+
+    SolrInputDocument d5 = new SolrInputDocument(id, "4", "a_s", "hello3", "a_i", "2", "a_f", "5");
+    String[] a5 = {"f"};
+    d5.addField(mergeFieldName, a5);
+
+    // document without the field
+    SolrInputDocument d6 = new SolrInputDocument(id, "5", "a_s", "hello4", "a_i", "2", "a_f", "6");
+
+    new UpdateRequest()
+        .add(d1)
+        .add(d2)
+        .add(d3)
+        .add(d4)
+        .add(d5)
+        .add(d6)
+        .commit(cluster.getSolrClient(), COLLECTIONORALIAS);
+
+    StreamContext streamContext = new StreamContext();
+    SolrClientCache solrClientCache = new SolrClientCache();
+    streamContext.setSolrClientCache(solrClientCache);
+
+    try {
+      SolrParams sParamsA = mapParams("q", "*:*", "fl", "id,a_s,a_i,a_f," + mergeFieldName, "sort", "a_s asc, a_f asc");
+      CloudSolrStream stream = new CloudSolrStream(zkHost, COLLECTIONORALIAS, sParamsA);
+      ReducerStream rstream = new ReducerStream(stream,
+          new FieldEqualitor("a_s"),
+          new FieldValueMergeOperation(new FieldComparator("a_f", ComparatorOrder.ASCENDING), 5, mergeFieldName));
+
+      rstream.setStreamContext(streamContext);
+      List<Tuple> tuples = getTuples(rstream);
+
+      assertEquals(5, tuples.size());
+
+      Tuple t0 = tuples.get(0);
+      ArrayList<String> al = (ArrayList<String>)t0.get(mergeFieldName);
+      Collections.sort(al);
+      assertArrayEquals(new String[]{"a", "b", "d", "e"}, al.toArray());
+
+      Tuple t1 = tuples.get(1);
+      al = (ArrayList<String>)t1.get(mergeFieldName);
+      Collections.sort(al);
+      assertArrayEquals(new String[]{"c"}, al.toArray());
+
+      Tuple t2 = tuples.get(2);
+      al = (ArrayList<String>)t2.get(mergeFieldName);
+      assertNull(al);
+
+      Tuple t3 = tuples.get(3);
+      al = (ArrayList<String>)t3.get(mergeFieldName);
+      Collections.sort(al);
+      assertArrayEquals(new String[]{"f"}, al.toArray());
+
+      Tuple t4 = tuples.get(4);
+      al = (ArrayList<String>)t4.get(mergeFieldName);
+      assertNull(al);
+
+    } finally {
+      solrClientCache.close();
+    }
+  }
+
+  @Test
+  public void testScalarFieldValueMergeReducerStream() throws Exception {
+    String mergeFieldName = "merge_s";
+
+    new UpdateRequest()
+        .add(id, "0", "a_s", "hello0", "a_i", "0", "a_f", "1", mergeFieldName ,"a")
+        .add(id, "2", "a_s", "hello1", "a_i", "2", "a_f", "2", mergeFieldName ,"b")
+        .add(id, "3", "a_s", "hello0", "a_i", "3", "a_f", "3", mergeFieldName ,"c")
+        .add(id, "4", "a_s", "hello2", "a_i", "4", "a_f", "4")
+        .add(id, "1", "a_s", "hello3", "a_i", "1", "a_f", "5", mergeFieldName ,"d")
+        .commit(cluster.getSolrClient(), COLLECTIONORALIAS);
+
+    StreamContext streamContext = new StreamContext();
+    SolrClientCache solrClientCache = new SolrClientCache();
+    streamContext.setSolrClientCache(solrClientCache);
+
+    try {
+      SolrParams sParamsA = mapParams("q", "*:*", "fl", "id,a_s,a_i,a_f," + mergeFieldName, "sort", "a_s asc, a_f asc");
+      CloudSolrStream stream = new CloudSolrStream(zkHost, COLLECTIONORALIAS, sParamsA);
+      ReducerStream rstream = new ReducerStream(stream,
+          new FieldEqualitor("a_s"),
+          new FieldValueMergeOperation(new FieldComparator("a_f", ComparatorOrder.ASCENDING), 5, mergeFieldName));
+
+      rstream.setStreamContext(streamContext);
+      List<Tuple> tuples = getTuples(rstream);
+
+      assertEquals(4, tuples.size());
+
+      Tuple t0 = tuples.get(0);
+      ArrayList<String> al = (ArrayList<String>)t0.get(mergeFieldName);
+      Collections.sort(al);
+      assertArrayEquals(new String[]{"a", "c"}, al.toArray());
+
+      Tuple t1 = tuples.get(1);
+      al = (ArrayList<String>)t1.get(mergeFieldName);
+      Collections.sort(al);
+      assertArrayEquals(new String[]{"b"}, al.toArray());
+
+      Tuple t2 = tuples.get(2);
+      al = (ArrayList<String>)t2.get(mergeFieldName);
+      assertNull(al);
+
+      Tuple t3 = tuples.get(3);
+      al = (ArrayList<String>)t3.get(mergeFieldName);
+      Collections.sort(al);
+      assertArrayEquals(new String[]{"d"}, al.toArray());
+
     } finally {
       solrClientCache.close();
     }
